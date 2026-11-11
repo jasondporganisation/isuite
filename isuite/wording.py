@@ -92,6 +92,12 @@ HELP = (
     "- /today, /week, /export"
 )
 
+HELP_UNKNOWN = (
+    "Sorry, I did not understand that.\n\n"
+    "To add someone by typing, start the message with the word lead and a colon, "
+    "like this: lead: Name 91234567\n\n" + HELP
+)
+
 _CONSENT = {"yes": "consent ✓", "unknown": "consent ?", "no": "no consent"}
 _OUTCOME = {
     "messaged": "Noted: you messaged them.",

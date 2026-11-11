@@ -122,9 +122,18 @@ class SoloBotTests(unittest.TestCase):
         self.assertEqual(self.last()["text"], wording.SOLO_TEAM_ONLY)
         self.assertIsNotNone(roster.get_agent(self.conn, OWNER))
 
+    def test_slash_help_is_the_plain_list_and_other_text_says_it_was_not_understood(self):
+        self.send(msg(OWNER, "/help"))
+        self.assertEqual(self.last()["text"], wording.HELP)
+        self.send(msg(OWNER, "Met Alan at a wedding 91234567"))
+        text = self.last()["text"]
+        self.assertTrue(text.startswith("Sorry, I did not understand that."))
+        self.assertIn("lead: Name 91234567", text)
+        self.assertIn(wording.HELP, text)
+
     def test_help_and_export_work_for_the_owner(self):
         self.send(msg(OWNER, "hi"))
-        self.assertEqual(self.last()["text"], wording.HELP)
+        self.assertEqual(self.last()["text"], wording.HELP_UNKNOWN)
         self.send(msg(OWNER, "/export"))
         self.assertEqual(self.last()["text"], wording.NO_CONTACTS)
 

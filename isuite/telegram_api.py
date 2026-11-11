@@ -1,3 +1,4 @@
+import http.client
 import json
 import time
 import urllib.error
@@ -12,7 +13,13 @@ Buttons = list[list[tuple[str, str]]]
 
 
 class TelegramError(Exception):
-    pass
+    """code is Telegram's HTTP or error code when there is one (401, 409, 429 ...), 0 when the
+    request got no answer at all, else None.
+    It is a plain number, so it is safe to act on where the message text is not."""
+
+    def __init__(self, message: str = "", code: int | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class Telegram(Protocol):
@@ -111,13 +118,16 @@ class BotAPI:
                         self._budget -= wait
                     self._sleep(wait)
                     continue
-                raise TelegramError(f"Telegram {method} HTTP {code}") from None
-            except (urllib.error.URLError, OSError, ValueError) as e:
+                raise TelegramError(f"Telegram {method} HTTP {code}", code=code) from None
+            except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+                # code 0: the request never got an answer (no internet, bad URL, cut-off reply)
                 raise TelegramError(
-                    f"Telegram {method} request failed: {type(e).__name__}") from None
+                    f"Telegram {method} request failed: {type(e).__name__}", code=0) from None
         if not isinstance(data, dict) or not data.get("ok"):
             desc = data.get("description", "unknown error") if isinstance(data, dict) else "bad reply"
-            raise TelegramError(f"Telegram {method} failed: {desc}")
+            code = data.get("error_code") if isinstance(data, dict) else None
+            raise TelegramError(f"Telegram {method} failed: {desc}",
+                                code=code if isinstance(code, int) else None)
         return data.get("result")
 
     def get_updates(self, offset: int | None, timeout: int = 30) -> list[dict]:

@@ -38,9 +38,13 @@ Nothing else needs to be installed.
 
 ## Set up, step by step
 
-### 1. Check Python
+### 1. Open the Terminal and check Python
 
-Open the Terminal app (on a Mac, press Command and Space, type Terminal, press Return). Type this and press Return:
+The Terminal is an app that comes with every Mac. It is a plain window where you type a command and press Return. Every command in this guide is typed there.
+
+To open it, press Command and Space, type `Terminal`, and press Return. A window opens with a line of text and a cursor. Click inside the window before you type or paste.
+
+Keep this one window open for the whole set-up. Type this and press Return:
 
     python3 --version
 
@@ -62,14 +66,24 @@ This plays a pretend day so you can see what the bot does. It needs no keys and 
 
 ### 4. Make your Telegram bot
 
+Make a new bot just for iSuite. Do not reuse a bot that another app or program already uses. Two programs on one bot take each other's messages, and some go missing.
+
 1. In Telegram, search for BotFather. It has a blue tick.
 2. Send it `/newbot`.
 3. Choose a name, then a username that ends in `bot`.
-4. BotFather replies with a long token. Keep this private. Anyone with it can control your bot.
+4. BotFather replies with a long token. It looks like a number, a colon, then a long mix of letters. Keep this private. Anyone with it can control your bot.
 
-### 5. Find your Telegram id
+Your new bot will not answer you yet. It only answers while iSuite is running on your computer (step 8).
 
-Your id is a number. One way to see it is to send any message to a bot such as userinfobot in Telegram. It replies with your id. (That is someone else's bot, so only use it for this.)
+### 5. Your Telegram id
+
+The bot needs your Telegram id, which is a number, so that it answers only you. You do not need to look it up. Setup finds it for you in step 7:
+
+1. Setup shows a 6-digit number on your screen.
+2. You send that number to your new bot in Telegram. The bot will not reply. That is normal, because it is not running yet.
+3. You press Enter in the Terminal with nothing typed. Setup asks Telegram who sent that number, and uses that person's id.
+
+Only you can see the number, so nobody else can be picked by mistake. If you already know your id, you can type it instead.
 
 ### 6. Get an Anthropic API key
 
@@ -80,15 +94,19 @@ Your id is a number. One way to see it is to send any message to a bot such as u
 
 ### 7. Save your three answers
 
+In the same Terminal window, type this and press Return:
+
     python3 -m isuite.setup
 
-It asks for the bot token, your Telegram id and the API key. The token and key are hidden as you type. They are saved in a private file in your home folder, in a folder called `.isuite`. It is set so that only your user account on the computer can read it.
+It asks for the bot token, your Telegram id and the API key. The token and key are hidden as you type, so nothing appears on screen when you paste them. Press Enter after each one. They are saved in a private file in your home folder, in a folder called `.isuite`. It is set so that only your user account on the computer can read it.
 
 ### 8. Start the bot
 
     python3 -m isuite.run
 
-Leave this window open. In Telegram, open your bot and send `/start`. It will welcome you. It is set up so that it answers only you. Anyone else who finds it is told it is a private copy.
+The window says "iSuite is running". Leave it open. In Telegram, open your bot and send `/start`. It will welcome you.
+
+Messages you sent before the bot was running may not be answered. Send them again. It is set up so that it answers only you. Anyone else who finds it is told it is a private copy.
 
 ### 9. Keep it running
 
@@ -115,7 +133,7 @@ Send `/export` to the bot. It sends back your list of names, numbers and stages.
 
 ## Stop the bot
 
-Click the Terminal window and press Control and C.
+Click the Terminal window and press Control and C. The window says "iSuite has stopped".
 
 ## Delete your data
 
@@ -129,8 +147,13 @@ Click the Terminal window and press Control and C.
 
 - **"ISUITE_TELEGRAM_TOKEN is not set":** run `python3 -m isuite.setup` again.
 - **"the config file can be read by other users":** run the `chmod 600` command it prints.
-- **The bot does not answer:** check the Terminal window is still open, and that the computer is awake and online.
+- **The bot does not answer:** check the Terminal window is still open and says "iSuite is running", and that the computer is awake and online. If you sent the message while the bot was off, send it again.
+- **It says "Sorry, I did not understand that":** the bot understands a photo or file of a form, a forwarded contact, the commands under Daily use, and a typed lead that starts with `lead:`. To add someone by typing, send `lead: Name 91234567`.
+- **The window says "Another program is using this bot":** the same bot token is in use somewhere else. Stop the other program, or make a new bot with BotFather and run setup again.
+- **The window says "Telegram did not accept the bot token":** run `python3 -m isuite.setup` again and paste the token from BotFather.
+- **Nothing appears when you paste the token or key:** that is on purpose, so nobody can read it from your screen. Paste once and press Return.
 - **"I can't read leads right now":** the AI service did not answer. Wait a minute and try again. Check that your Anthropic account has credit.
+- **Setup says "I have not seen" your number:** check you sent it to your own new bot, not to BotFather. Send it again, then press Enter in the Terminal.
 - **It says "private copy":** the Telegram id you saved is not the account you are messaging from. Run setup again with the right id.
 - **A photo cannot be read:** type it instead: `lead: Name 91234567`.
 - **You changed the bot token:** delete the database file in the `.isuite` folder, or the bot will wait for old messages.

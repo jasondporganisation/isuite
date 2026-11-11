@@ -162,8 +162,10 @@ def _handle_message(deps: Deps, msg: dict, chat_id: int) -> None:
         _lead_text(deps, chat_id, agent, text[5:].strip())
     elif (roadshow := _ROADSHOW.match(text)):
         _roadshow(deps, chat_id, agent, text[roadshow.end():].strip())
-    else:
+    elif cmd == "/help":
         deps.tg.send(chat_id, wording.HELP)
+    else:
+        deps.tg.send(chat_id, wording.HELP_UNKNOWN)
 
 
 def _enrol_owner(deps: Deps, user: dict) -> None:

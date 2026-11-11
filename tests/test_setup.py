@@ -41,7 +41,7 @@ class Session:
         return "\n".join(self.shown + self.hidden_prompts + self.visible_prompts)
 
 
-class SetupTests(unittest.TestCase):
+class SetupCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -56,6 +56,8 @@ class SetupTests(unittest.TestCase):
         session.err = err.getvalue()
         return code
 
+
+class SetupTests(SetupCase):
     def test_writes_the_three_values_with_private_modes(self):
         s = Session(visible=[OWNER], hidden=[TOKEN, KEY])
         self.assertEqual(self.run_setup(s), 0)
@@ -175,6 +177,141 @@ class SetupTests(unittest.TestCase):
         s = Session(visible=[OWNER], hidden=[TOKEN, KEY])
         self.run_setup(s)
         self.assertIn("python3 -m isuite.run", s.everything())
+
+
+CODE = "482913"
+
+
+class FindMyIdTests(SetupCase):
+    """An empty answer to the id question finds whoever sent this run's number to the new bot."""
+
+    def run_lookup(self, session, find_senders):
+        return self.run_setup(session, find_senders=find_senders, code_fn=lambda: CODE)
+
+    def test_the_sender_of_the_code_becomes_the_owner(self):
+        seen = []
+        s = Session(visible=[""], hidden=[TOKEN, KEY])
+        code = self.run_lookup(s, lambda tok: seen.append(tok) or [(424242, "Jo", f" {CODE} ")])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [TOKEN])
+        self.assertEqual(load_env_file(self.file)["ISUITE_OWNER"], OWNER)
+        self.assertIn(CODE, s.visible_prompts[0])
+        self.assertIn("Found Jo, id 424242.", s.shown)
+        self.assertNotIn(TOKEN[:12], s.everything())
+
+    def test_a_stranger_who_messaged_the_bot_first_is_never_picked(self):
+        stranger = [(999, "Jo", "hello"), (999, "Jo", "/start"), (999, "Jo", "48291")]
+        s = Session(visible=["", OWNER], hidden=[TOKEN, KEY])
+        self.assertEqual(self.run_lookup(s, lambda tok: stranger), 0)
+        self.assertEqual(load_env_file(self.file)["ISUITE_OWNER"], OWNER)
+        self.assertNotIn("999", s.everything())
+
+    def test_the_owner_is_found_among_other_senders(self):
+        both = [(999, "Mallory", "hi"), (424242, "Jo", CODE)]
+        s = Session(visible=[""], hidden=[TOKEN, KEY])
+        self.assertEqual(self.run_lookup(s, lambda tok: both), 0)
+        self.assertEqual(load_env_file(self.file)["ISUITE_OWNER"], OWNER)
+
+    def test_code_not_seen_yet_asks_again_and_then_works(self):
+        answers = [[(424242, "Jo", "hello")], [(424242, "Jo", CODE)]]
+        s = Session(visible=["", ""], hidden=[TOKEN, KEY])
+        self.assertEqual(self.run_lookup(s, lambda tok: answers.pop(0)), 0)
+        self.assertIn(f"I have not seen {CODE} yet", s.everything())
+        self.assertEqual(load_env_file(self.file)["ISUITE_OWNER"], OWNER)
+
+    def test_two_people_sending_the_code_are_never_guessed(self):
+        s = Session(visible=["", OWNER], hidden=[TOKEN, KEY])
+        self.assertEqual(self.run_lookup(s, lambda tok: [(1, "A", CODE), (2, "B", CODE)]), 0)
+        self.assertEqual(load_env_file(self.file)["ISUITE_OWNER"], OWNER)
+        self.assertIn("will not guess", s.everything())
+
+    def test_any_failure_is_one_plain_line_without_the_token_and_setup_carries_on(self):
+        for exc in (setup.TelegramError(f"Telegram getUpdates failed: {TOKEN}"),
+                    RuntimeError(f"URL can't contain control characters. '/bot{TOKEN}/x'"),
+                    AttributeError("'list' object has no attribute 'get'")):
+            def boom(tok, exc=exc):
+                raise exc
+            s = Session(visible=["", OWNER], hidden=[TOKEN, KEY])
+            self.assertEqual(self.run_lookup(s, boom), 0)
+            self.assertNotIn(TOKEN[:12], s.everything() + s.err)
+            self.assertNotIn("Traceback", s.err)
+            self.assertIn("Could not check Telegram", s.everything())
+            self.file.unlink()
+
+    def test_endless_empty_answers_give_up_and_write_nothing(self):
+        s = Session(visible=[""] * 20, hidden=[TOKEN, KEY])
+        self.assertEqual(self.run_lookup(s, lambda tok: []), 1)
+        self.assertFalse(self.file.exists())
+
+    def test_a_sender_name_cannot_draw_on_the_terminal(self):
+        nasty = "Jo\x1b[2J\n\u202e\u200b" + "x" * 200
+        s = Session(visible=[""], hidden=[TOKEN, KEY])
+        self.run_lookup(s, lambda tok: [(424242, nasty, CODE)])
+        for bad in ("\x1b", "\u202e", "\u200b", "x" * 41):
+            self.assertNotIn(bad, s.everything())
+
+    def test_each_run_gets_its_own_six_digit_code(self):
+        codes = {setup.new_code() for _ in range(50)}
+        self.assertGreater(len(codes), 40)
+        self.assertTrue(all(c.isdigit() and len(c) == 6 for c in codes))
+
+
+class SecretShapeTests(SetupCase):
+    def test_a_token_with_a_stray_control_character_or_wrong_shape_is_refused(self):
+        for bad in (TOKEN + "\x7f", TOKEN[:9] + "\x00" + TOKEN[9:], "not-a-token",
+                    "123456789:short", TOKEN.replace(":", "")):
+            s = Session(visible=[OWNER], hidden=[bad, TOKEN, KEY])
+            self.assertEqual(self.run_setup(s), 0, repr(bad))
+            self.assertEqual(load_env_file(self.file)["ISUITE_TELEGRAM_TOKEN"], TOKEN)
+            self.assertNotIn(bad[:12], s.everything())
+            self.file.unlink()
+
+    def test_a_key_with_a_control_character_is_refused(self):
+        s = Session(visible=[OWNER], hidden=[TOKEN, KEY + "\x7f", KEY])
+        self.assertEqual(self.run_setup(s), 0)
+        self.assertEqual(load_env_file(self.file)["ANTHROPIC_API_KEY"], KEY)
+
+
+class RecentSendersTests(unittest.TestCase):
+    def senders(self, updates):
+        class Api:
+            def get_updates(self, offset, timeout=30):
+                assert offset is None and timeout == 0
+                return updates
+        return setup.recent_senders(TOKEN, api_factory=lambda tok: Api())
+
+    def msg(self, uid, text="hi", name="Jo", chat="private", bot=False):
+        return {"update_id": 1, "message": {"chat": {"type": chat}, "text": text,
+                "from": {"id": uid, "first_name": name, "is_bot": bot}}}
+
+    def test_private_messages_from_people_with_their_text(self):
+        ups = [self.msg(5, "a"), self.msg(5, "b"), self.msg(7, "c", "Al"),
+               self.msg(8, chat="group"), self.msg(9, bot=True), {"update_id": 2},
+               {"message": {"chat": {"type": "private"}, "from": {"id": "x"}}},
+               {"message": {"chat": {"type": "private"}, "from": {"id": True}}}]
+        self.assertEqual(self.senders(ups), [(5, "Jo", "a"), (5, "Jo", "b"), (7, "Al", "c")])
+
+    def test_odd_shapes_are_skipped_not_crashed_on(self):
+        ups = [None, 3, {"message": []}, {"message": {"chat": [], "from": {}}},
+               {"message": {"chat": {"type": "private"}, "from": None}},
+               {"message": {"chat": {"type": "private"}, "from": {"id": 5}, "photo": [1]}}]
+        self.assertEqual(self.senders(ups), [(5, "someone", "")])
+
+    def test_nothing_yet_is_an_empty_list(self):
+        self.assertEqual(self.senders([]), [])
+
+
+class TransportErrorTests(unittest.TestCase):
+    def test_a_cut_off_or_malformed_request_becomes_a_telegram_error_without_the_token(self):
+        import http.client
+        from isuite.telegram_api import BotAPI
+        for exc in (http.client.InvalidURL(f"bad url /bot{TOKEN}/getUpdates"),
+                    http.client.IncompleteRead(b"")):
+            with mock.patch("urllib.request.urlopen", side_effect=exc):
+                with self.assertRaises(setup.TelegramError) as caught:
+                    BotAPI(TOKEN).get_updates(None, timeout=0)
+            self.assertEqual(caught.exception.code, 0)
+            self.assertNotIn(TOKEN[:12], str(caught.exception))
 
 
 class EnvFileTests(unittest.TestCase):

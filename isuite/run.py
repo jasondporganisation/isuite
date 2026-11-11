@@ -12,7 +12,7 @@ from isuite.bot import Deps, handle_update
 from isuite.config import Config, load_config, load_env_file
 from isuite.db import connect
 from isuite.llm import ClaudeClient, FakeLLM
-from isuite.telegram_api import BotAPI, FakeTelegram
+from isuite.telegram_api import BotAPI, FakeTelegram, TelegramError
 
 RETRY_SECONDS = 5
 POLL_SECONDS = 30
@@ -22,6 +22,32 @@ ALBUM_POLL_SECONDS = 2  # short poll while an album summary is waiting to go out
 def _report(exc: Exception) -> None:
     # Type name only: messages can carry the bot token or client details.
     print(f"isuite loop error: {type(exc).__name__}", file=sys.stderr)
+
+
+HINT_TOKEN = ("Telegram did not accept the bot token. Stop iSuite, run "
+              "python3 -m isuite.setup again with the token from BotFather, then start it again.")
+HINT_CLASH = ("Another program is using this bot, so messages can go missing. Stop the other "
+              "program, or make a new bot for iSuite with BotFather and run setup again. "
+              "Run iSuite in one window, on one computer only.")
+HINT_OFFLINE = ("Could not reach Telegram. Check the internet connection. "
+                "iSuite will keep trying.")
+_HINT_BY_CODE = {0: HINT_OFFLINE, 401: HINT_TOKEN, 404: HINT_TOKEN, 409: HINT_CLASH}
+_hints_shown: set[str] = set()
+
+
+def reset_hints() -> None:
+    _hints_shown.clear()
+
+
+def hint_once(exc: Exception) -> None:
+    """One plain line, once per run, for a polling failure a person can fix. Chosen from the
+    error's number only, never from its text."""
+    if not isinstance(exc, TelegramError):
+        return
+    hint = _HINT_BY_CODE.get(exc.code)
+    if hint and hint not in _hints_shown:
+        _hints_shown.add(hint)
+        print(f"isuite: {hint}", file=sys.stderr)
 
 
 def step(deps: Deps, offset: int | None, sleep: Callable[[float], None] = time.sleep) -> int | None:
@@ -35,6 +61,7 @@ def step(deps: Deps, offset: int | None, sleep: Callable[[float], None] = time.s
         updates = deps.tg.get_updates(offset, timeout=ALBUM_POLL_SECONDS if waiting else POLL_SECONDS)
     except Exception as e:
         _report(e)
+        hint_once(e)
         sleep(RETRY_SECONDS)
         return offset
     for update in updates:
@@ -186,16 +213,24 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] = os.environ,
     return (serve or _serve)(cfg)
 
 
-def _serve(cfg: Config) -> int:
+RUNNING = ("iSuite is running. Leave this window open and message your bot in Telegram. "
+           "To stop it, click this window and press Control and C.")
+STOPPED = "iSuite has stopped. Your contacts are saved. Start it again the same way."
+
+
+def _serve(cfg: Config, out: Callable[[str], None] = print) -> int:
     """The real polling loop. Tests never reach it: they pass their own `serve` to main()."""
     conn = connect(cfg.db_path)
     deps = Deps(conn, cfg, BotAPI(cfg.telegram_token), ClaudeClient(cfg.anthropic_key),
                 lambda: datetime.now(timezone.utc))
     offset = schedule.load_offset(conn)
+    reset_hints()
+    out(RUNNING)
     try:
         while True:
             offset = step(deps, offset)
     except KeyboardInterrupt:
+        out(STOPPED)
         return 0
     finally:
         conn.close()

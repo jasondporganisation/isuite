@@ -247,7 +247,7 @@ class BotTests(unittest.TestCase):
     def test_roadshow_needs_the_word_on_its_own(self):
         self.join(A)
         self.send(msg(A, "roadshows are tiring"))
-        self.assertEqual(self.last()["text"], wording.HELP)
+        self.assertEqual(self.last()["text"], wording.HELP_UNKNOWN)
         self.assertIsNone(roster.get_agent(self.conn, A).roadshow_on)
         self.send(msg(A, "Roadshow"))
         self.assertEqual(self.last()["text"], wording.roadshow_on(""))
@@ -262,7 +262,7 @@ class BotTests(unittest.TestCase):
             self.send(msg(A, text))
             self.assertEqual(self.last()["text"], wording.roadshow_on(place), text)
         self.send(msg(A, "roadshows: are tiring"))
-        self.assertEqual(self.last()["text"], wording.HELP)
+        self.assertEqual(self.last()["text"], wording.HELP_UNKNOWN)
 
     # ---------- a photo sent "as a file" ----------
 
@@ -722,7 +722,7 @@ class BotTests(unittest.TestCase):
     def test_unknown_message_gets_help_and_other_updates_ignored(self):
         self.join(A)
         self.send(msg(A, "hello"))
-        self.assertEqual(self.last()["text"], wording.HELP)
+        self.assertEqual(self.last()["text"], wording.HELP_UNKNOWN)
         n = len(self.tg.sent)
         self.send({"edited_message": {}})
         self.assertEqual(len(self.tg.sent), n)
