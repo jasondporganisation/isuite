@@ -1,0 +1,13 @@
+# Your data and keys: never commit these
+.isuite-open-export
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+config.env
+.env
+.isuite/
+
+__pycache__/
+*.pyc
+.DS_Store
