@@ -19,11 +19,16 @@ class LLMError(Exception):
         self.status = status
 
 
+class LLMCutOff(LLMError):
+    """The reply ran out of room (stop_reason max_tokens). The AI itself is working."""
+
+
 class LLM(Protocol):
     def complete(self, system: str, user: str, *, model: str = HAIKU,
                  image: bytes | None = None, image_type: str = "image/jpeg",
                  max_tokens: int = 1024,
-                 timeout: float = 60, retries: int = 1) -> str: ...
+                 timeout: float = 60, retries: int = 1,
+                 thinking: bool = True) -> str: ...
 
 
 class ClaudeClient:
@@ -34,17 +39,25 @@ class ClaudeClient:
     def complete(self, system: str, user: str, *, model: str = HAIKU,
                  image: bytes | None = None, image_type: str = "image/jpeg",
                  max_tokens: int = 1024,
-                 timeout: float = 60, retries: int = 1) -> str:
+                 timeout: float = 60, retries: int = 1,
+                 thinking: bool = True) -> str:
         content = []
         if image is not None:
             content.append({"type": "image", "source": {
                 "type": "base64", "media_type": image_type,
                 "data": base64.b64encode(image).decode("ascii")}})
         content.append({"type": "text", "text": user})
-        body = json.dumps({
+        payload = {
             "model": model, "max_tokens": max_tokens, "system": system,
             "messages": [{"role": "user", "content": content}],
-        }).encode("utf-8")
+        }
+        if not thinking:
+            # The model thinks before it answers unless told not to, and thinking counts
+            # against max_tokens. A short job with a small allowance (a draft) can come
+            # back with no text at all, so it switches thinking off. Careful reading
+            # (names and phone numbers) keeps it on: it is measurably more accurate.
+            payload["thinking"] = {"type": "disabled"}
+        body = json.dumps(payload).encode("utf-8")
         headers = {
             "x-api-key": self._api_key,
             "anthropic-version": "2023-06-01",
@@ -66,6 +79,9 @@ class ClaudeClient:
                 raise LLMError(f"Claude API request failed: {type(e).__name__}") from None
         if not isinstance(data, dict) or not isinstance(data.get("content"), list):
             raise LLMError("Claude API reply had an unexpected shape")
+        if data.get("stop_reason") == "max_tokens":
+            # A reply that ran out of room is unfinished. Never pass half a message on.
+            raise LLMCutOff("Claude API reply was cut off")
         for block in data["content"]:
             if not isinstance(block, dict):
                 raise LLMError("Claude API reply had an unexpected shape")
@@ -85,11 +101,13 @@ class FakeLLM:
     def complete(self, system: str, user: str, *, model: str = HAIKU,
                  image: bytes | None = None, image_type: str = "image/jpeg",
                  max_tokens: int = 1024,
-                 timeout: float = 60, retries: int = 1) -> str:
+                 timeout: float = 60, retries: int = 1,
+                 thinking: bool = True) -> str:
         self.calls.append({"system": system, "user": user, "model": model,
                            "image": image, "image_type": image_type,
                            "max_tokens": max_tokens,
-                           "timeout": timeout, "retries": retries})
+                           "timeout": timeout, "retries": retries,
+                           "thinking": thinking})
         if not self._responses:
             raise LLMError("FakeLLM has no more responses")
         return self._responses.pop(0)

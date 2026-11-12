@@ -118,6 +118,43 @@ class DraftsTest(unittest.TestCase):
         self.assertIn("Bishan fair", llm.calls[0]["user"])
         self.assertIn("Mei", llm.calls[0]["user"])
 
+    def test_met_at_with_a_colon_is_read_as_the_place(self):
+        row = {"name": "Mei Tan", "phone": None, "chase_step": 0,
+               "notes": "Met at: Bishan fair. Likes hiking"}
+        llm = FakeLLM(["Hi Mei!"])
+        draft_with_link(llm, row, "Sam")
+        self.assertIn("Where they met: Bishan fair\n", llm.calls[0]["user"])
+
+    def test_a_cut_off_reply_uses_the_template_but_keeps_the_ai_for_later_drafts(self):
+        from isuite.llm import LLMCutOff
+
+        class CutOnce:
+            n = 0
+
+            def complete(self, *a, **k):
+                self.n += 1
+                if self.n == 1:
+                    raise LLMCutOff("cut")
+                return "Hi Mei, hello again!"
+
+        llm, budget = CutOnce(), DraftBudget()
+        row = {"name": "Mei Tan", "phone": None, "notes": ""}
+        first, _ = draft_with_link(llm, row, "Sam", budget=budget)
+        second, _ = draft_with_link(llm, row, "Sam", budget=budget)
+        self.assertIn("this is Sam", first)
+        self.assertEqual(second, "Hi Mei, hello again!")
+
+    def test_a_draft_switches_thinking_off(self):
+        llm = FakeLLM(["Hi Mei!"])
+        draft_with_link(llm, {"name": "Mei Tan", "phone": None, "notes": ""}, "Sam")
+        self.assertFalse(llm.calls[0]["thinking"])
+
+    def test_the_ai_is_told_not_to_invent_details(self):
+        llm = FakeLLM(["Hi Mei!"])
+        draft_with_link(llm, {"name": "Mei Tan", "phone": None, "notes": ""}, "Sam")
+        self.assertIn("Use only the facts given", llm.calls[0]["system"])
+        self.assertIn("Do not invent", llm.calls[0]["system"])
+
     def test_banned_where_replaced_in_fallback(self):
         row = {"name": "Mei Tan", "phone": "+6591234567", "chase_step": 0,
                "notes": "Met at a risk free roadshow"}

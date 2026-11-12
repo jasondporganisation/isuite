@@ -387,7 +387,7 @@ class BotTests(unittest.TestCase):
         add_or_merge(self.conn, agent.id, LeadDraft("Tan", "91234567", "unknown"),
                      "text", NOW.date(), NOW)
         self.llm._responses.append(LEADS)
-        self.send(msg(A, "lead: two people"))
+        self.send(msg(A, "lead: Tan 9123 4567, Lim 81234567"))
         self.send(cb(A, "ok"))
         self.assertEqual(self.last()["text"], "Saved 2 leads (1 merged)")
         self.assertEqual(self.count("contacts"), 2)
@@ -834,7 +834,7 @@ class BotTests(unittest.TestCase):
             {"name": "A", "phone": "91111111"}, {"name": "B", "phone": "92222222"},
             {"name": "C", "phone": "93333333"}]})
         self.llm._responses.append(three)
-        self.send(msg(A, "lead: three"))
+        self.send(msg(A, "lead: A 91111111, B 92222222, C 93333333"))
         import isuite.bot as botmod
         real = botmod.contacts.add_or_merge
         calls = {"n": 0}

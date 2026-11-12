@@ -58,8 +58,34 @@ class ExtractTests(unittest.TestCase):
         r = json.dumps({"leads": [
             {"name": "Bob", "phone": "S1234567D"}, {"name": "Amy", "phone": "S 1234567 D"},
             {"name": "Kim", "phone": "9123 4567"}]})
-        leads = extract_leads(FakeLLM([r]), text="x")
+        leads = extract_leads(FakeLLM([r]), text="Bob, Amy, Kim 9123 4567")
         self.assertEqual([l.phone_raw for l in leads], ["", "", "9123 4567"])
+
+    def test_reading_leads_keeps_thinking_on(self):
+        llm = FakeLLM(['{"leads":[]}'])
+        extract_leads(llm, text="Mei 91234567")
+        self.assertTrue(llm.calls[0]["thinking"])
+
+    def test_a_typed_number_the_ai_changed_is_dropped(self):
+        llm = FakeLLM([json.dumps({"leads": [
+            {"name": "Priya", "phone": "65911122222"},
+            {"name": "Mei", "phone": "8123 4567"},
+            {"name": "Siti", "phone": "+65 82223233"},
+            {"name": "Bo", "phone": "6598765432"}]})])
+        leads = extract_leads(llm, text="Priya 6591112222, Mei 81234567, "
+                                        "Siti 8222 3233, Bo 98765432")
+        self.assertEqual([d.phone_raw for d in leads],
+                         ["", "8123 4567", "+65 82223233", "6598765432"])
+
+    def test_an_extra_digit_borrowed_from_the_next_number_is_dropped(self):
+        llm = FakeLLM([json.dumps({"leads": [
+            {"name": "Tan", "phone": "912345678"}, {"name": "Lim", "phone": "8123-4567"}]})])
+        leads = extract_leads(llm, text="Tan 9123 4567, Lim 8123-4567")
+        self.assertEqual([d.phone_raw for d in leads], ["", "8123-4567"])
+
+    def test_a_number_read_from_a_photo_is_not_checked_against_text(self):
+        llm = FakeLLM([json.dumps({"leads": [{"name": "Mei", "phone": "81234567"}]})])
+        self.assertEqual(extract_leads(llm, image=b"IMG")[0].phone_raw, "81234567")
 
     def test_extraction_allows_long_sheets(self):
         llm = FakeLLM([TWO])
@@ -231,6 +257,40 @@ class ClaudeClientTests(unittest.TestCase):
             with self.assertRaises(LLMError) as cm:
                 ClaudeClient("k").complete("s", "u")
         self.assertNotIn("TOPSECRET", str(cm.exception))
+
+    def test_thinking_is_switched_off_only_when_asked(self):
+        seen = {}
+
+        def fake(req, timeout=None):
+            seen["req"] = req
+            return _Resp(OK)
+
+        with mock.patch("urllib.request.urlopen", fake):
+            ClaudeClient("k").complete("s", "u", thinking=False)
+        self.assertEqual(json.loads(seen["req"].data)["thinking"], {"type": "disabled"})
+        with mock.patch("urllib.request.urlopen", fake):
+            ClaudeClient("k").complete("s", "u")
+        self.assertNotIn("thinking", json.loads(seen["req"].data))
+
+    def test_a_cut_off_reply_raises_and_its_text_is_not_used(self):
+        payload = {"stop_reason": "max_tokens",
+                   "content": [{"type": "text", "text": "Hi Wei Ming, it's J"}]}
+        with mock.patch("urllib.request.urlopen", lambda req, timeout=None: _Resp(payload)):
+            with self.assertRaises(LLMError) as cm:
+                ClaudeClient("k").complete("s", "u")
+        self.assertNotIn("Wei Ming", str(cm.exception))
+
+    def test_a_cut_off_reply_is_its_own_error_type(self):
+        from isuite.llm import LLMCutOff
+        payload = {"stop_reason": "max_tokens", "content": [{"type": "thinking"}]}
+        with mock.patch("urllib.request.urlopen", lambda req, timeout=None: _Resp(payload)):
+            with self.assertRaises(LLMCutOff):
+                ClaudeClient("k").complete("s", "u")
+
+    def test_a_finished_reply_is_returned(self):
+        payload = {"stop_reason": "end_turn", "content": [{"type": "text", "text": "hi"}]}
+        with mock.patch("urllib.request.urlopen", lambda req, timeout=None: _Resp(payload)):
+            self.assertEqual(ClaudeClient("k").complete("s", "u"), "hi")
 
     def test_non_text_blocks_before_a_text_block_are_skipped(self):
         payload = {"content": [{"type": "thinking"}, {"type": "text", "text": "hi"}]}

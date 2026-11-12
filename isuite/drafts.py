@@ -3,7 +3,7 @@ import sys
 import time
 
 from . import house_terms
-from .llm import HAIKU
+from .llm import HAIKU, LLMCutOff
 from .names import first_name as pick_first_name
 from .templates import FALLBACK, FALLBACK_NO_PLACE
 from .whatsapp import wa_link
@@ -12,7 +12,7 @@ BANNED = ("guarantee", "guaranteed", "risk-free", "no risk", "confirm returns",
           "best plan", "100%", "promise", "risk free", "zero risk", "assured")
 # Terms tied to one insurer or agency live in house_terms.py and are added at check time.
 _URL_MARKERS = ("http://", "https://", "www.")  # a draft never carries a link
-_MET_AT = re.compile(r"\bmet at\s+([^;,.]+)", re.IGNORECASE)
+_MET_AT = re.compile(r"\bmet at\s*:?\s+([^;,.]+)", re.IGNORECASE)
 _MAX_CHARS = 400
 DRAFT_TIMEOUT = 12  # seconds for one AI draft; a slow AI must not freeze the bot
 
@@ -39,6 +39,8 @@ _SYSTEM = (
     "You write one short WhatsApp follow-up message for a Singapore insurance agent "
     "to send to someone they met. Under 60 words. Warm, friendly Singapore English, "
     "no pressure. No product claims, no returns, no promises, no insurer names. "
+    "Use only the facts given. Do not invent a place, an event, a date, a meal, "
+    "or an earlier chat or meeting. Do not suggest when you met. "
     "Reply with the message text only."
 )
 
@@ -93,7 +95,11 @@ def make_draft(llm, *, agent_name: str, first_name: str, where: str,
         return fallback
     try:
         reply = llm.complete(_SYSTEM, user, model=HAIKU, max_tokens=300,
-                             timeout=DRAFT_TIMEOUT, retries=0)
+                             timeout=DRAFT_TIMEOUT, retries=0, thinking=False)
+    except LLMCutOff:
+        # One over-long reply. The AI is fine, so later drafts in this job still use it.
+        print("isuite draft error: LLMCutOff", file=sys.stderr)
+        return fallback
     except Exception as e:
         if budget is not None:
             budget.trip()

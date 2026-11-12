@@ -115,11 +115,14 @@ def consent_label(consent: str) -> str:
     return label
 
 
+NO_PHONE = "no phone (if you sent a number, tap Cancel and type it again)"
+
+
 def pending_summary(leads: list[dict]) -> str:
     lines = ["I found these. Save them?"]
     for i, lead in enumerate(leads, 1):
         name = lead.get("name") or "(no name)"
-        phone = lead.get("phone_raw") or "no phone"
+        phone = lead.get("phone_raw") or NO_PHONE
         lines.append(f"{i}. {name}, {phone}, {consent_label(lead.get('consent', 'unknown'))}")
     return "\n".join(lines)
 

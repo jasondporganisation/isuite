@@ -29,6 +29,28 @@ def _consent(v) -> str:
     return "unknown"
 
 
+_RUN = re.compile(r"[0-9][0-9 ()+\-]*")
+
+
+def _digit_runs(text: str) -> list[str]:
+    """The digits of each number as it was typed: '9123 4567, Lim 8123-4567' gives
+    ['91234567', '81234567']. Keeping the runs apart stops a number with an extra digit
+    from passing because that digit starts the next number."""
+    return [re.sub(r"\D", "", m.group(0)) for m in _RUN.finditer(text)]
+
+
+def _phone_in_source(phone: str, runs: list[str]) -> bool:
+    """True when the phone's digits appear unbroken inside one typed number.
+    A leading 65 the AI added (or dropped) is allowed."""
+    digits = re.sub(r"\D", "", phone)
+    if not digits:
+        return True
+    if any(digits in run for run in runs):
+        return True
+    return (digits.startswith("65") and len(digits) > 8
+            and any(digits[2:] in run for run in runs))
+
+
 def extract_leads(llm: LLM, *, text: str | None = None,
                   image: bytes | None = None,
                   image_type: str = "image/jpeg") -> list[LeadDraft]:
@@ -46,6 +68,7 @@ def extract_leads(llm: LLM, *, text: str | None = None,
     if not isinstance(data, dict) or not isinstance(data.get("leads"), list):
         raise ExtractError("Reply JSON has no 'leads' list")
     leads = []
+    runs = _digit_runs(text or "")
     for item in data["leads"]:
         if not isinstance(item, dict):
             continue
@@ -53,6 +76,10 @@ def extract_leads(llm: LLM, *, text: str | None = None,
         phone = item.get("phone")
         phone = str(phone).strip() if phone is not None else ""
         if has_nric(phone):
+            phone = ""
+        if text and phone and not _phone_in_source(phone, runs):
+            # The AI returned a number that was not typed. A wrong number means a
+            # message to a stranger, so drop it and let the agent type it again.
             phone = ""
         if not name and not phone:
             continue
