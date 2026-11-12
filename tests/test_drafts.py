@@ -4,8 +4,8 @@ import time
 import unittest
 
 from isuite.drafts import DRAFT_TIMEOUT, DraftBudget, check_copy, draft_with_link, make_draft
-from isuite.llm import FakeLLM
-from isuite.templates import FALLBACK
+from isuite.llm import FakeLLM, LLMError
+from isuite.templates import FALLBACK, FALLBACK_NO_PLACE
 
 
 class DraftsTest(unittest.TestCase):
@@ -124,7 +124,7 @@ class DraftsTest(unittest.TestCase):
         text, link = draft_with_link(FakeLLM(["Guaranteed returns!"]), row, "Sam")
         self.assertNotIn("risk free", text)
         self.assertEqual(check_copy(text), [])
-        self.assertIn("the roadshow", text)
+        self.assertNotIn("roadshow", text)  # a banned place is dropped, never swapped for a guess
 
     def test_make_draft_result_always_passes_copy_check(self):
         out = make_draft(FakeLLM([]), agent_name="Sam Tan", first_name="Mei",
@@ -136,7 +136,58 @@ class DraftsTest(unittest.TestCase):
         text, link = draft_with_link(FakeLLM([]), row, "Sam")
         self.assertEqual(link, "")
         self.assertIn("Hi there,", text)
-        self.assertIn("the roadshow", text)
+        self.assertNotIn("roadshow", text)
+        self.assertNotIn("you at", text)
+
+    def test_no_place_noted_means_no_place_in_the_draft_or_the_ai_request(self):
+        row = {"name": "Mei Tan", "phone": "+6591234567", "chase_step": 0, "notes": "likes hiking"}
+        for step in range(4):
+            llm = FakeLLM([])
+            text, _ = draft_with_link(llm, row, "Sam", sent_count=step)
+            self.assertNotIn("roadshow", text)
+            self.assertNotIn("met at", text)
+            self.assertEqual(check_copy(text), [])
+            self.assertIn("Where they met: not known, do not mention a place", llm.calls[0]["user"])
+
+    def test_a_noted_place_is_still_used(self):
+        row = {"name": "Mei Tan", "phone": None, "chase_step": 0, "notes": "Met at Bishan fair"}
+        llm = FakeLLM([])
+        text, _ = draft_with_link(llm, row, "Sam")
+        self.assertIn("Bishan fair", text)
+        self.assertIn("Where they met: Bishan fair", llm.calls[0]["user"])
+
+    def test_every_no_place_fallback_passes_the_copy_check(self):
+        for tpl in FALLBACK_NO_PLACE.values():
+            text = tpl.format(first_name="Mei", agent_name="Sam")
+            self.assertEqual(check_copy(text), [])
+            self.assertNotIn("{", text)
+
+    def test_greeting_uses_the_given_name_not_the_family_name(self):
+        row = {"name": "Lim Ah Kow, Daniel", "phone": None, "chase_step": 0, "notes": None}
+        llm = FakeLLM([])
+        text, _ = draft_with_link(llm, row, "Sam")
+        self.assertIn("Hi Daniel,", text)
+        self.assertIn("Contact first name: Daniel\n", llm.calls[0]["user"])
+
+    def test_draft_error_log_carries_the_http_number_and_nothing_else(self):
+        class Busy:
+            def complete(self, *a, **k):
+                raise LLMError("Claude API HTTP 529 secret-detail", status=529)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            make_draft(Busy(), agent_name="Sam", first_name="Mei", where="", sent_count=0, notes="")
+        self.assertEqual(err.getvalue(), "isuite draft error: LLMError 529\n")
+
+    def test_draft_error_log_ignores_a_status_that_is_not_an_http_number(self):
+        for status in (None, "sk-secret", True, 99999, -1):
+            class Odd:
+                def complete(self, *a, **k):
+                    e = LLMError("x"); e.status = status
+                    raise e
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                make_draft(Odd(), agent_name="Sam", first_name="Mei", where="", sent_count=0, notes="")
+            self.assertEqual(err.getvalue(), "isuite draft error: LLMError\n")
 
 
 class DraftBudgetTests(unittest.TestCase):

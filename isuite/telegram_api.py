@@ -29,6 +29,8 @@ class Telegram(Protocol):
 
     def answer_callback(self, callback_id: str, text: str = "") -> None: ...
 
+    def clear_buttons(self, chat_id: int, message_id: int) -> None: ...
+
     def download_file(self, file_id: str) -> bytes: ...
 
     def begin_wait_budget(self, seconds: float) -> None: ...
@@ -151,6 +153,12 @@ class BotAPI:
             params["text"] = text
         self._call("answerCallbackQuery", params)
 
+    def clear_buttons(self, chat_id: int, message_id: int) -> None:
+        """Take the buttons off a message already sent, so a used button cannot be tapped again."""
+        self._call("editMessageReplyMarkup", {
+            "chat_id": chat_id, "message_id": message_id,
+            "reply_markup": {"inline_keyboard": []}})
+
     def download_file(self, file_id: str) -> bytes:
         info = self._call("getFile", {"file_id": file_id})
         path = (info or {}).get("file_path")
@@ -172,6 +180,7 @@ class FakeTelegram:
     def __init__(self):
         self.sent: list[dict] = []
         self.answered: list[dict] = []
+        self.cleared: list[dict] = []
         self.files: dict[str, bytes] = {}
         self.queue: list[dict] = []
         self.budget_calls: list[str] = []
@@ -186,6 +195,9 @@ class FakeTelegram:
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.answered.append({"callback_id": callback_id, "text": text})
+
+    def clear_buttons(self, chat_id: int, message_id: int) -> None:
+        self.cleared.append({"chat_id": chat_id, "message_id": message_id})
 
     def begin_wait_budget(self, seconds: float) -> None:
         self.budget_calls.append("begin")

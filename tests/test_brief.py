@@ -11,7 +11,7 @@ from isuite.brief import send_brief
 from isuite.config import Config
 from isuite.drafts import DraftBudget
 from isuite.contacts import LeadDraft, add_or_merge, record_outcome
-from isuite.templates import FALLBACK
+from isuite.templates import FALLBACK, FALLBACK_NO_PLACE
 from isuite.db import connect
 from isuite.llm import FakeLLM
 from isuite.roster import get_agent
@@ -142,7 +142,7 @@ class BriefTests(BriefBase):
             self.assertIn(f"Fresh{i}", first15)
 
     def fallback_text(self, step):
-        return FALLBACK[step].format(first_name="Tan", agent_name="Sam", where="the roadshow")
+        return FALLBACK_NO_PLACE[step].format(first_name="Tan Mei", agent_name="Sam")
 
     def test_late_first_sent_does_not_jump_to_the_final_template(self):
         a = self.agent(1, name="Sam")
@@ -255,7 +255,7 @@ class DraftBudgetBriefTests(BriefBase):
         return agents
 
     def fallback_text(self, a):
-        return FALLBACK[0].format(first_name="Lead", agent_name=a.name, where="the roadshow")
+        return FALLBACK_NO_PLACE[0].format(first_name="Lead", agent_name=a.name)
 
     def test_one_ai_error_switches_rest_of_job_to_fallbacks(self):
         agents = self.three_agents()

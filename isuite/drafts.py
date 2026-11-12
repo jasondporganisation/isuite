@@ -4,7 +4,8 @@ import time
 
 from . import house_terms
 from .llm import HAIKU
-from .templates import FALLBACK
+from .names import first_name as pick_first_name
+from .templates import FALLBACK, FALLBACK_NO_PLACE
 from .whatsapp import wa_link
 
 BANNED = ("guarantee", "guaranteed", "risk-free", "no risk", "confirm returns",
@@ -68,21 +69,25 @@ def check_copy(text: str) -> list[str]:
 
 def _fallback(agent_name: str, first_name: str, where: str, sent_count: int) -> str:
     step = min(max(sent_count, 0), 3)
-    return FALLBACK[step].format(first_name=first_name, agent_name=agent_name, where=where)
+    table = FALLBACK if where else FALLBACK_NO_PLACE
+    return table[step].format(first_name=first_name, agent_name=agent_name, where=where)
 
 
 def make_draft(llm, *, agent_name: str, first_name: str, where: str,
                sent_count: int, notes: str, budget: DraftBudget | None = None) -> str:
-    """sent_count = messages the agent has actually sent this contact (picks the wording)."""
+    """sent_count = messages the agent has actually sent this contact (picks the wording).
+    where = "" means the place is not known; the draft then names no place."""
+    where = (where or "").strip()
     if check_copy(where):
-        where = "the roadshow"
+        where = ""
     if check_copy(first_name):
         first_name = "there"
     fallback = _fallback(agent_name, first_name, where, sent_count)
     if check_copy(fallback):
         fallback = _fallback("your adviser", first_name, where, sent_count)
     user = (f"Agent name: {agent_name}\nContact first name: {first_name}\n"
-            f"Where they met: {where}\nFollow-up number: {sent_count}\n"
+            f"Where they met: {where or 'not known, do not mention a place or event'}\n"
+            f"Follow-up number: {sent_count}\n"
             f"Notes: {notes or '-'}")
     if budget is not None and not budget.allowed():
         return fallback
@@ -92,8 +97,9 @@ def make_draft(llm, *, agent_name: str, first_name: str, where: str,
     except Exception as e:
         if budget is not None:
             budget.trip()
-        # Type name only, so a bad key or model id shows up without leaking details.
-        print(f"isuite draft error: {type(e).__name__}", file=sys.stderr)
+        # Type name and the HTTP number only, so a bad key or a busy AI shows up
+        # without leaking details.
+        print(f"isuite draft error: {type(e).__name__}{_status(e)}", file=sys.stderr)
         return fallback
     text = (reply or "").strip().strip("\"'“”").strip()
     if not text or len(text) > _MAX_CHARS or check_copy(text):
@@ -101,13 +107,20 @@ def make_draft(llm, *, agent_name: str, first_name: str, where: str,
     return text
 
 
+def _status(exc: Exception) -> str:
+    status = getattr(exc, "status", None)
+    if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+        return f" {status}"
+    return ""
+
+
 def draft_with_link(llm, contact_row, agent_name: str,
                     sent_count: int = 0, budget: DraftBudget | None = None) -> tuple[str, str]:
     name = (contact_row["name"] or "").strip()
-    first_name = name.split()[0] if name else "there"
+    first_name = pick_first_name(name)
     notes = contact_row["notes"] or ""
     m = _MET_AT.search(notes)
-    where = m.group(1).strip() if m and m.group(1).strip() else "the roadshow"
+    where = m.group(1).strip() if m else ""
     text = make_draft(llm, agent_name=agent_name, first_name=first_name, where=where,
                       sent_count=sent_count, notes=notes, budget=budget)
     phone = contact_row["phone"]

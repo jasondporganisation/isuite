@@ -450,10 +450,25 @@ def _handle_callback(deps: Deps, cq: dict, chat_id: int) -> None:
     data = cq.get("data") or ""
     if data == "ok":
         _confirm_pending(deps, chat_id, agent)
+        _retire_buttons(deps, cq, chat_id)  # only after the save, so a failed save can be retried
     elif data == "cancel":
         _cancel_pending(deps, chat_id, agent)
+        _retire_buttons(deps, cq, chat_id)
     else:
         _contact_callback(deps, chat_id, agent, data)
+
+
+def _retire_buttons(deps: Deps, cq: dict, chat_id: int) -> None:
+    """Take the Looks right / Cancel buttons off the message they were tapped on. A used
+    button left on screen gets tapped again. Best effort: Telegram refuses this for old
+    messages, and the tap itself is still handled."""
+    message_id = (cq.get("message") or {}).get("message_id")
+    if not isinstance(message_id, int) or isinstance(message_id, bool):
+        return
+    try:
+        deps.tg.clear_buttons(chat_id, message_id)
+    except Exception as e:
+        print(f"isuite error: {type(e).__name__}", file=sys.stderr)
 
 
 def _read_pending(deps, agent) -> dict | None:

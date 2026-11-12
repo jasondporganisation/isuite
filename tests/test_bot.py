@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 from datetime import datetime, timedelta, timezone
 
-from isuite import wording, drafts, roster
+from isuite import bot, wording, drafts, roster
 from isuite.bot import Deps, handle_update
 from isuite.config import Config
 from isuite.contacts import LeadDraft, add_or_merge
@@ -874,6 +874,92 @@ class BotTests(unittest.TestCase):
         group["callback_query"]["message"]["chat"] = {"id": -5, "type": "group"}
         with contextlib.redirect_stderr(io.StringIO()):
             self.send(group)  # group taps are still ignored, without a crash
+
+    # ---------- used buttons come off the message ----------
+
+    def test_looks_right_takes_the_buttons_off_the_tapped_message(self):
+        self.join(A)
+        self.send(msg(A, contact={"first_name": "One", "phone_number": "91111111"}))
+        tap = cb(A, "ok")
+        tap["callback_query"]["message"]["message_id"] = 77
+        self.send(tap)
+        self.assertEqual(self.tg.cleared, [{"chat_id": tap["callback_query"]["message"]["chat"]["id"],
+                                            "message_id": 77}])
+        self.assertEqual(self.count("contacts"), 1)
+
+    def test_cancel_takes_the_buttons_off_too(self):
+        self.join(A)
+        self.send(msg(A, contact={"first_name": "One", "phone_number": "91111111"}))
+        tap = cb(A, "cancel")
+        tap["callback_query"]["message"]["message_id"] = 78
+        self.send(tap)
+        self.assertEqual([c["message_id"] for c in self.tg.cleared], [78])
+        self.assertEqual(self.count("contacts"), 0)
+
+    def test_consent_and_outcome_taps_keep_their_buttons(self):
+        self.join(A)
+        self.send(msg(A, contact={"first_name": "One", "phone_number": "91111111"}))
+        self.send(cb(A, "ok"))
+        self.tg.cleared.clear()
+        cid = self.deps.conn.execute("SELECT id FROM contacts").fetchone()["id"]
+        for data in (f"consent:{cid}", f"out:{cid}:messaged"):
+            tap = cb(A, data)
+            tap["callback_query"]["message"]["message_id"] = 80
+            self.send(tap)
+        self.assertEqual(self.tg.cleared, [])
+
+    def test_a_failed_save_keeps_the_buttons_so_the_agent_can_retry(self):
+        self.join(A)
+        self.send(msg(A, contact={"first_name": "One", "phone_number": "91111111"}))
+        real = bot._confirm_pending
+
+        def boom(*a, **k):
+            raise RuntimeError("db is busy")
+
+        bot._confirm_pending = boom
+        self.addCleanup(setattr, bot, "_confirm_pending", real)
+        tap = cb(A, "ok")
+        tap["callback_query"]["message"]["message_id"] = 82
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.send(tap)
+        self.assertEqual(self.tg.cleared, [])
+        self.assertEqual(self.count("pending"), 1)
+
+    def test_a_refused_button_removal_does_not_drop_the_save(self):
+        self.join(A)
+        self.send(msg(A, contact={"first_name": "One", "phone_number": "91111111"}))
+
+        def refuse(chat_id, message_id):
+            raise TelegramError("message can't be edited", code=400)
+
+        self.tg.clear_buttons = refuse
+        tap = cb(A, "ok")
+        tap["callback_query"]["message"]["message_id"] = 79
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.send(tap)
+        self.assertEqual(self.count("contacts"), 1)
+        self.assertTrue(self.last()["text"].startswith("Saved 1 lead"))
+        self.assertEqual(err.getvalue(), "isuite error: TelegramError\n")
+
+    def test_a_tap_with_no_usable_message_id_still_works(self):
+        self.join(A)
+        for bad in (None, "77", True, 1.5):
+            self.send(msg(A, contact={"first_name": "One", "phone_number": "91111111"}))
+            tap = cb(A, "ok")
+            if bad is None:
+                tap["callback_query"]["message"].pop("message_id", None)
+            else:
+                tap["callback_query"]["message"]["message_id"] = bad
+            self.send(tap)
+        self.assertEqual(self.tg.cleared, [])
+        self.assertEqual(self.count("contacts"), 1)
+
+    def test_a_stranger_or_paused_agent_cannot_clear_buttons(self):
+        tap = cb(999999, "ok")
+        tap["callback_query"]["message"]["message_id"] = 81
+        self.send(tap)
+        self.assertEqual(self.tg.cleared, [])
 
     def test_huge_ids_give_not_found(self):
         self.join(A)
